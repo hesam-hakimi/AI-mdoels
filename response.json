@@ -1,0 +1,53 @@
+IntentRouteResponse={
+  "intent": "DATA_QA | ANALYTICS_REPORT | GENERAL_QA | OUT_OF_SCOPE",
+  "confidence": 0.0,
+  "reason": "string",
+  "suggested_next_agent": "clarity | metadata | general",
+  "suggested_followups": ["string"]
+}
+,
+ClarityResponse={
+  "is_clear": true,
+  "clarifying_questions": ["string"],
+  "suggested_options": ["string"],
+  "assumptions_if_proceeding": ["string"]
+}
+, 
+MetadataResponse={
+  "citations": [
+    {
+      "source": "field|table|relationship",
+      "doc_id": "string",
+      "snippet": "string"
+    }
+  ],
+  "suggested_tables": ["schema.table"],
+  "suggested_join_paths": ["A -> B on key1,key2"],
+  "context_bundle": "string"
+}, 
+SqlGenResponse={
+  "sql_server": "string",
+  "sql_sqlite": "string",
+  "used_tables": ["schema.table"],
+  "assumptions": ["string"],
+  "notes": "string"
+}
+,
+TriageResponse={
+  "answer": "string",
+  "highlights": ["string"],
+  "followups": ["string"]
+}
+,{
+  "charts": [
+    {
+      "title": "string",
+      "chart_type": "line|bar|pie|area",
+      "x": "column_name",
+      "y": "column_name",
+      "image_base64_png": "string",
+      "notes": "string"
+    }
+  ]
+}
+
