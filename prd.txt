@@ -1,0 +1,258 @@
+Product Requirements Document (PRD)
+
+1) Product name
+
+TD Text-to-SQL Analytics Chat (Prototype)
+
+2) Problem statement
+
+TD users need a fast way to ask business questions about approved datasets without learning schemas, joins, or SQL. The system must stay read-only, avoid large data dumps, and remain secure and explainable.
+
+3) Goals
+	•	Provide a chat-first interface that answers data questions using metadata-grounded SQL.
+	•	Support multi-step clarification when questions are ambiguous (up to 5 clarification turns).
+	•	Support analytics/report intent including charts derived from aggregated query results.
+	•	Be modular, secure, and switchable between SQL Server (Azure SQL) and SQLite for testing.
+	•	Provide debug visibility (logs, retrieved metadata, prompts, SQL, tool calls, errors) when enabled.
+
+4) Non-goals (for v1)
+	•	No write/update capability (DML/DDL) in any environment.
+	•	No UI workflow for metadata upload/index rebuild (script/module only in v1).
+	•	No image-based relationship extraction (relationships are text-defined in Excel).
+
+5) Users & personas
+	•	Analyst / Business user: asks questions, wants clear answers and charts.
+	•	Power user / Data user: wants SQL transparency (debug mode), validation steps.
+	•	Developer / Support: needs robust logs and reproducible error traces.
+
+6) User experience requirements
+
+6.1 UI design
+	•	Green + white TD theme, clean cards, TD-like styling, logo placeholder.
+	•	Chat interface as primary interaction model.
+	•	Results are shown as:
+	•	concise answer summary
+	•	small table preview (limited)
+	•	optional charts for analytics requests
+
+6.2 UI options (must be configurable in UI)
+
+These must appear as UI toggles/inputs (top bar or settings panel):
+	1.	Debug mode (on/off)
+
+	•	Off: no internal details visible.
+	•	On: inline debug panels per interaction:
+	•	intent classification decision
+	•	clarification decision + questions
+	•	retrieved metadata snippets + doc IDs (citations)
+	•	prompts sent to LLM (or safe summaries if required)
+	•	generated SQL (both dialects if produced)
+	•	execution timing + row/column counts
+	•	tool calls
+	•	handled/unhandled errors (stack traces optional)
+
+	2.	Max rows returned to UI (default: 50, adjustable)
+	3.	Max columns returned to UI (default: 20, adjustable)
+	4.	Max execution time (default: e.g., 20s, adjustable)
+	5.	DB backend selector (SQL Server / SQLite) — if allowed by environment
+
+7) Functional requirements
+
+7.1 Metadata ingestion & indexing (module/script)
+	•	Input: rrdw_meta_data.xlsx with 3 sheets:
+	•	field (column metadata)
+	•	table (table business definitions)
+	•	relationship (join definitions in text)
+	•	The ingestion module must:
+	•	validate schema
+	•	build three document sets
+	•	drop and recreate the Azure AI Search indexes (full refresh)
+	•	upload documents
+	•	This does not need to be UI-driven for v1.
+
+7.2 Retrieval (Azure AI Search)
+	•	On each question:
+	•	query AI Search to retrieve top relevant metadata docs across:
+	•	field docs
+	•	table docs
+	•	relationship docs
+	•	Provide citations (doc IDs + snippets) to downstream agents and optionally to UI (debug mode).
+
+7.3 Agentic orchestration (AutoGen-based)
+
+The system must include these layers/agents:
+	1.	Intent Router Agent
+
+	•	Categorizes request into:
+	•	Data Q&A (SQL)
+	•	Analytical report (SQL + charts)
+	•	General question (non-data)
+	•	Irrelevant/out-of-scope → redirect politely
+
+	2.	Requirement Clarity Agent
+
+	•	Checks if the request is answerable:
+	•	identifies missing constraints (date range, entity definition, “deposit” meaning, etc.)
+	•	asks clarifying questions (up to 5 turns)
+	•	suggests choices when ambiguous
+	•	Uses retrieval tools to ground clarifications.
+
+	3.	SQL Planner/Generator Agent
+
+	•	Generates SQL grounded in retrieved metadata + relationships.
+	•	Produces both:
+	•	SQL Server dialect (primary target)
+	•	SQLite dialect (optional/testing)
+	•	Must generate safe queries aligned with limits and performance constraints (aggregation-first where relevant).
+
+	4.	SQL Safety/Policy Layer (enforced, not optional)
+
+	•	Validates generated SQL:
+	•	SELECT-only
+	•	blocks UPDATE/INSERT/DELETE/MERGE/DDL
+	•	row/column limits enforced
+	•	query timeout enforced
+	•	prevents “return everything” behavior
+	•	If unsafe → reject and ask user to reframe.
+
+	5.	Execution Layer
+
+	•	Executes SQL on selected backend:
+	•	SQL Server (Azure SQL) primary
+	•	SQLite optional
+	•	Returns only limited result sets (per UI settings).
+
+	6.	Result Interpretation Agent
+
+	•	Receives:
+	•	user question
+	•	SQL executed
+	•	limited result preview
+	•	Produces:
+	•	business-friendly narrative
+	•	key numbers
+	•	caveats/assumptions
+	•	suggested follow-up questions
+
+	7.	Chart/Analytics Agent
+
+	•	For analytical report intent:
+	•	decides chart type(s)
+	•	generates charts from aggregated result sets
+	•	returns charts to UI
+	•	Must not require loading huge raw data.
+
+7.4 Error handling & robustness
+	•	All unhandled errors must be:
+	•	visible in debug mode
+	•	logged to file
+	•	When SQL execution fails:
+	•	the system provides the error context to the agentic layer
+	•	model decides whether to retry and how (repair SQL, ask clarifying Q, or stop)
+
+7.5 Caching (Redis optional)
+
+If enabled, Redis may be used for:
+	•	session conversation state
+	•	caching retrieval results
+	•	caching query plans / successful SQL templates
+	•	rate limiting / debouncing repeated queries
+
+Redis must be optional and the system must run without it.
+
+⸻
+
+Non-Functional Requirements (NFR)
+
+Security
+	•	MSI authentication for Azure OpenAI + Azure AI Search + Azure SQL.
+	•	No secrets in code; config via environment variables.
+	•	SQL enforcement:
+	•	SELECT-only
+	•	denylist DDL/DML keywords
+	•	restrict to allowlisted schemas/tables if available
+	•	Logging must support redaction mode (optional) to avoid sensitive leakage in stored logs.
+
+Performance
+	•	Must support large tables by:
+	•	enforcing limits
+	•	encouraging aggregation
+	•	timeouts
+	•	preventing full table dumps
+	•	Retrieval + plan + execution should be responsive for typical questions (target: a few seconds; timeout controlled).
+
+Reliability
+	•	Graceful failure with actionable messages.
+	•	Deterministic indexing refresh (drop + recreate).
+	•	Minimal external dependencies (no Hugging Face).
+
+Maintainability
+	•	Modular architecture:
+	•	clear separation: retrieval, routing, clarity, SQL gen, safety, execution, interpretation, visualization
+	•	Each module unit-testable.
+	•	DB backend interchangeable through a single interface.
+
+Observability
+	•	Structured logs with:
+	•	correlation ID per chat turn
+	•	timing per step
+	•	retrieval doc IDs
+	•	SQL executed (debug)
+	•	errors/stack traces
+	•	Debug mode shows step outputs inline in UI.
+
+Compliance (operational)
+	•	Read-only analytics system by design.
+	•	Clear audit trail of what was executed.
+
+⸻
+
+Acceptance Criteria
+
+A) UI & UX
+	1.	UI renders in TD green/white theme with clean card layout and chat interface.
+	2.	Debug mode OFF → user sees only final response + limited preview.
+	3.	Debug mode ON → inline panels show:
+	•	intent decision
+	•	clarity checks + clarifying Qs
+	•	retrieved metadata + citations
+	•	prompts (or safe summaries)
+	•	SQL generated
+	•	execution metrics
+	•	errors (including unhandled)
+
+B) Metadata indexing
+	4.	Running the indexing module:
+	•	validates Excel schema
+	•	drops and recreates 3 AI Search indexes
+	•	uploads docs successfully
+	5.	Retrieval returns relevant field/table/relationship docs for a sample query.
+
+C) Safety
+	6.	Any query attempting UPDATE/DELETE/INSERT/DDL is blocked with a clear message.
+	7.	SELECT * is either blocked or rewritten to explicit columns (policy decision), and never returns unlimited rows.
+	8.	UI enforces max rows/cols/timeouts; system does not exceed configured limits.
+
+D) Agentic behavior
+	9.	For ambiguous questions, the system asks clarifying questions before SQL generation (up to 5 turns).
+	10.	Intent router directs:
+
+	•	data Q&A → SQL path
+	•	analytics/report → SQL + chart path
+	•	general questions → non-data answer
+	•	irrelevant → redirect guidance
+
+E) Execution + interpretation
+	11.	For a valid data question, system returns:
+
+	•	narrative answer
+	•	limited result preview table
+	•	(optional) SQL visible only in debug/collapsible
+
+	12.	For analytical requests, system returns at least one chart based on aggregated results.
+
+F) DB switching
+	13.	Switching backend config from SQLite → Azure SQL requires no UI changes and minimal config-only changes.
+
+G) Logging
+	14.	All errors are logged to file and visible in debug mode; logs are easy to copy into GitHub Copilot.
